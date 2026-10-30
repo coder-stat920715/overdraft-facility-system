@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: od-postgres
+    environment:
+      POSTGRES_DB: overdraft_db
+      POSTGRES_USER: od_user
+      POSTGRES_PASSWORD: od_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - od-pgdata:/var/lib/postgresql/data
+volumes:
+  od-pgdata:

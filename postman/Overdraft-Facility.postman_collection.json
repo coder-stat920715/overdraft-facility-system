@@ -1,0 +1,2621 @@
+{
+  "info": {
+    "name": "Overdraft Facility Management API",
+    "description": "End-to-end test collection. Run folders 00 -> 11 in order (Collection Runner / Newman). See docs/POSTMAN-TESTING-GUIDE.md for the detailed steps and expected values.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "accountNumber",
+      "value": ""
+    },
+    {
+      "key": "cycleAccount",
+      "value": ""
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "day1",
+      "value": "2026-03-29"
+    },
+    {
+      "key": "day2",
+      "value": "2026-03-30"
+    },
+    {
+      "key": "day3",
+      "value": "2026-03-31"
+    },
+    {
+      "key": "billingDate",
+      "value": "2026-04-01"
+    },
+    {
+      "key": "cycleAccrualDate",
+      "value": "2026-05-10"
+    },
+    {
+      "key": "cycleSkipDate",
+      "value": "2026-06-01"
+    },
+    {
+      "key": "cycleBillDate",
+      "value": "2026-06-15"
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response time < 3s', () => pm.expect(pm.response.responseTime).to.be.below(3000));",
+          "pm.test('JSON content type', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('json'));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Health check",
+      "description": "Confirms the application is up before running the scenario.",
+      "item": [
+        {
+          "name": "API docs reachable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Application is up (200)', () => pm.response.to.have.status(200));",
+                  "pm.test('OpenAPI 3 document', () => pm.expect(pm.response.json().openapi).to.match(/^3\\./));",
+                  "pm.test('All 7 endpoints documented', () => {",
+                  "  const p = Object.keys(pm.response.json().paths);",
+                  "  ['/api/v1/overdraft/accounts','/api/v1/overdraft/accounts/{accountNumber}/drawdown','/api/v1/overdraft/accounts/{accountNumber}/repay',",
+                  "   '/api/v1/overdraft/accounts/{accountNumber}/statement','/api/v1/overdraft/admin/trigger-eod-accrual',",
+                  "   '/api/v1/overdraft/admin/trigger-monthly-billing','/api/v1/overdraft/analytics/compare'].forEach(x => pm.expect(p).to.include(x));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v3",
+                "api-docs"
+              ],
+              "query": []
+            },
+            "description": "Pre-condition: application running on {{baseUrl}}. Expected: 200 and an OpenAPI 3 document listing all 7 endpoints."
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Account opening",
+      "description": "Opens the OD account used by the whole scenario and stores its number in {{accountNumber}}.",
+      "item": [
+        {
+          "name": "Open OD account (HDFC, 15L @ 12%)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('runId', Date.now().toString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Account number format HDFCOD + 10 digits', () => pm.expect(j.accountNumber).to.match(/^HDFCOD\\d{10}$/));",
+                  "pm.test('Limit invariants', () => {",
+                  "  pm.expect(j.sanctionedLimit).to.eql(1500000);",
+                  "  pm.expect(j.utilizedAmount).to.eql(0);",
+                  "  pm.expect(j.availableLimit).to.eql(1500000);",
+                  "  pm.expect(j.annualInterestRate).to.eql(12);",
+                  "  pm.expect(j.status).to.eql('ACTIVE');",
+                  "  pm.expect(j.billingCycleDay).to.eql(1);",
+                  "  pm.expect(j.bankName).to.eql('HDFC');",
+                  "});",
+                  "pm.test('Unbilled interest starts at 0', () => pm.expect(j.accumulatedUnbilledInterest).to.eql(0));",
+                  "pm.collectionVariables.set('accountNumber', j.accountNumber);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts"
+              ],
+              "query": []
+            },
+            "description": "Creates a new ACTIVE account: sanctioned 1,500,000.00, rate 12%, billing cycle day 1. A fresh runId is generated so every collection run uses unique references. The returned accountNumber is saved to the collection variable {{accountNumber}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-{{runId}}\",\n  \"bankName\": \"HDFC\",\n  \"sanctionedLimit\": 1500000.0,\n  \"annualInterestRate\": 12.0,\n  \"billingCycleDay\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Statement - brand new account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Zero utilization', () => {",
+                  "  pm.expect(s.account.utilizedAmount).to.eql(0);",
+                  "  pm.expect(s.utilization.utilizationPercent).to.eql(0);",
+                  "  pm.expect(s.utilization.availableLimit).to.eql(1500000);",
+                  "  pm.expect(s.utilization.projectedDailyInterest).to.eql(0);",
+                  "});",
+                  "pm.test('Empty history', () => { pm.expect(s.transactions).to.have.length(0); pm.expect(s.dailyInterestLog).to.have.length(0); });",
+                  "pm.test('Next billing date present', () => pm.expect(s.utilization.nextBillingDate).to.match(/^\\d{4}-\\d{2}-\\d{2}$/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Expected: zero utilization, full limit available, no transactions, no interest log."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Scenario Day 1: draw 3L, run EOD",
+      "description": "Day 1 (business date {{day1}}): withdraw 300,000 from the 1,500,000 limit at 12% and run end-of-day accrual. Expected daily interest = 300000 x 12 / 36500 = 98.6301.",
+      "item": [
+        {
+          "name": "Drawdown 300,000",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('Drawdown posted', () => {",
+                  "  pm.expect(t.transactionType).to.eql('DRAWDOWN');",
+                  "  pm.expect(t.amount).to.eql(300000);",
+                  "  pm.expect(t.utilizedBalanceAfter).to.eql(300000);",
+                  "  pm.expect(t.availableLimitAfter).to.eql(1200000);",
+                  "  pm.expect(t.referenceId).to.eql('DD-' + pm.collectionVariables.get('runId') + '-1');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Debits the credit line: utilized 0 -> 300,000; available 1,500,000 -> 1,200,000. referenceId makes the call idempotent per account.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 300000.0,\n  \"referenceId\": \"DD-{{runId}}-1\",\n  \"description\": \"Working capital\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Trigger EOD accrual - Day 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Job summary', () => {",
+                  "  pm.expect(j.jobName).to.eql('EOD_INTEREST_ACCRUAL');",
+                  "  pm.expect(j.businessDate).to.eql(pm.collectionVariables.get('day1'));",
+                  "  pm.expect(j.accountsProcessed).to.be.at.least(1);",
+                  "  pm.expect(j.accountsFailed).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual?businessDate={{day1}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{day1}}"
+                }
+              ]
+            },
+            "description": "Runs the EOD job for {{day1}}. The summary covers ALL active accounts in the database, so per-account results are asserted on the statement in the next request."
+          }
+        },
+        {
+          "name": "Statement after Day 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Principal unchanged by accrual', () => pm.expect(s.account.utilizedAmount).to.eql(300000));",
+                  "pm.test('Unbilled interest = 98.6301', () => pm.expect(s.account.accumulatedUnbilledInterest).to.eql(98.6301));",
+                  "pm.test('One ledger row', () => {",
+                  "  pm.expect(s.dailyInterestLog).to.have.length(1);",
+                  "  const l = s.dailyInterestLog[0];",
+                  "  pm.expect(l.accrualDate).to.eql(pm.collectionVariables.get('day1'));",
+                  "  pm.expect(l.utilizedBalance).to.eql(300000);",
+                  "  pm.expect(l.interestRate).to.eql(12);",
+                  "  pm.expect(l.accruedAmount).to.eql(98.6301);",
+                  "  pm.expect(l.billed).to.eql(false);",
+                  "});",
+                  "pm.test('Utilization 20.00% and projected daily interest', () => {",
+                  "  pm.expect(s.utilization.utilizationPercent).to.eql(20);",
+                  "  pm.expect(s.utilization.projectedDailyInterest).to.eql(98.6301);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "One ledger row for Day 1: balance 300,000, accrued 98.6301. Unbilled bucket = 98.6301 and principal is unchanged (no daily compounding)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Scenario Day 2: keep balance, run EOD",
+      "description": "Day 2 (business date {{day2}}): no transactions; balance stays 300,000. Expected accrual 98.6301 again; cumulative 197.2602.",
+      "item": [
+        {
+          "name": "Trigger EOD accrual - Day 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('No failures', () => pm.expect(pm.response.json().accountsFailed).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual?businessDate={{day2}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{day2}}"
+                }
+              ]
+            },
+            "description": "Runs the EOD job for {{day2}}."
+          }
+        },
+        {
+          "name": "Statement after Day 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Unbilled interest = 197.2602', () => pm.expect(s.account.accumulatedUnbilledInterest).to.eql(197.2602));",
+                  "pm.test('Two ledger rows, newest first', () => {",
+                  "  pm.expect(s.dailyInterestLog).to.have.length(2);",
+                  "  pm.expect(s.dailyInterestLog[0].accrualDate).to.eql(pm.collectionVariables.get('day2'));",
+                  "  pm.expect(s.dailyInterestLog[0].accruedAmount).to.eql(98.6301);",
+                  "});",
+                  "pm.test('Principal still 300,000', () => pm.expect(s.account.utilizedAmount).to.eql(300000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Two ledger rows; cumulative unbilled interest 197.2602."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Scenario Day 3: repay 1L, run EOD",
+      "description": "Day 3 (business date {{day3}}): repay 100,000 so the balance drops to 200,000, then run EOD. Expected accrual 200000 x 12 / 36500 = 65.7534; cumulative 263.0136.",
+      "item": [
+        {
+          "name": "Repay 100,000 (partial, no penalty)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('Repayment posted with no fee', () => {",
+                  "  pm.expect(t.transactionType).to.eql('REPAYMENT');",
+                  "  pm.expect(t.amount).to.eql(100000);",
+                  "  pm.expect(t.utilizedBalanceAfter).to.eql(200000);",
+                  "  pm.expect(t.availableLimitAfter).to.eql(1300000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/repay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "repay"
+              ],
+              "query": []
+            },
+            "description": "Partial repayment, zero prepayment penalty: utilized 300,000 -> 200,000; available 1,200,000 -> 1,300,000.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100000.0,\n  \"referenceId\": \"RP-{{runId}}-1\",\n  \"description\": \"Part repayment\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Trigger EOD accrual - Day 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('No failures', () => pm.expect(pm.response.json().accountsFailed).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual?businessDate={{day3}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{day3}}"
+                }
+              ]
+            },
+            "description": "Runs the EOD job for {{day3}} using the reduced closing balance."
+          }
+        },
+        {
+          "name": "Statement after Day 3 (cumulative check)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Cumulative unbilled interest = 263.0136', () => pm.expect(s.account.accumulatedUnbilledInterest).to.eql(263.0136));",
+                  "pm.test('Ledger sum equals account bucket', () => {",
+                  "  const sum = s.dailyInterestLog.reduce((a, l) => a + l.accruedAmount, 0);",
+                  "  pm.expect(Number(sum.toFixed(4))).to.eql(263.0136);",
+                  "});",
+                  "pm.test('Day 3 row uses 200,000 balance', () => {",
+                  "  pm.expect(s.dailyInterestLog).to.have.length(3);",
+                  "  pm.expect(s.dailyInterestLog[0].utilizedBalance).to.eql(200000);",
+                  "  pm.expect(s.dailyInterestLog[0].accruedAmount).to.eql(65.7534);",
+                  "});",
+                  "pm.test('Balances', () => {",
+                  "  pm.expect(s.account.utilizedAmount).to.eql(200000);",
+                  "  pm.expect(s.account.availableLimit).to.eql(1300000);",
+                  "  pm.expect(s.utilization.utilizationPercent).to.eql(13.33);",
+                  "});",
+                  "pm.test('Invariant available = sanctioned - utilized', () => pm.expect(s.account.availableLimit).to.eql(s.account.sanctionedLimit - s.account.utilizedAmount));",
+                  "pm.test('Statement shows DRAWDOWN and REPAYMENT, newest first', () => {",
+                  "  pm.expect(s.transactions).to.have.length(2);",
+                  "  pm.expect(s.transactions[0].transactionType).to.eql('REPAYMENT');",
+                  "  pm.expect(s.transactions[1].transactionType).to.eql('DRAWDOWN');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Cumulative accrued = 98.6301 + 98.6301 + 65.7534 = 263.0136. Balance 200,000, available 1,300,000."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Idempotency",
+      "description": "Re-running a job for the same date must not double-accrue.",
+      "item": [
+        {
+          "name": "Re-run EOD accrual - Day 3 (must skip)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Nothing re-processed for already-accrued date', () => pm.expect(j.accountsProcessed).to.eql(0));",
+                  "pm.test('Existing accounts skipped', () => pm.expect(j.accountsSkipped).to.be.at.least(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual?businessDate={{day3}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{day3}}"
+                }
+              ]
+            },
+            "description": "UNIQUE(account_id, accrual_date) plus a pre-check make EOD idempotent."
+          }
+        },
+        {
+          "name": "Statement unchanged after re-run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('No double accrual', () => {",
+                  "  pm.expect(s.dailyInterestLog).to.have.length(3);",
+                  "  pm.expect(s.account.accumulatedUnbilledInterest).to.eql(263.0136);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Still 3 ledger rows and 263.0136 unbilled."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Monthly billing and capitalization",
+      "description": "Billing run dated {{billingDate}} bills all accruals up to the day before (31-Mar). 263.0136 is rounded HALF_EVEN to 263.01 and added to the utilized balance.",
+      "item": [
+        {
+          "name": "Trigger monthly billing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Billing summary', () => {",
+                  "  pm.expect(j.jobName).to.eql('MONTHLY_INTEREST_BILLING');",
+                  "  pm.expect(j.accountsProcessed).to.be.at.least(1);",
+                  "  pm.expect(j.accountsFailed).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-monthly-billing?businessDate={{billingDate}}&forceAllCycles=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-monthly-billing"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{billingDate}}"
+                },
+                {
+                  "key": "forceAllCycles",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "forceAllCycles=true bills every account with unbilled interest (demo mode); set it to false to honour each account's billingCycleDay."
+          }
+        },
+        {
+          "name": "Statement after billing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Interest capitalized', () => {",
+                  "  pm.expect(s.account.utilizedAmount).to.eql(200263.01);",
+                  "  pm.expect(s.account.availableLimit).to.eql(1299736.99);",
+                  "});",
+                  "pm.test('Unbilled bucket reset to zero', () => pm.expect(s.account.accumulatedUnbilledInterest).to.eql(0));",
+                  "pm.test('All ledger rows flagged billed', () => s.dailyInterestLog.forEach(l => pm.expect(l.billed).to.eql(true)));",
+                  "pm.test('INTEREST_CHARGED transaction of 263.01', () => {",
+                  "  const t = s.transactions[0];",
+                  "  pm.expect(t.transactionType).to.eql('INTEREST_CHARGED');",
+                  "  pm.expect(t.amount).to.eql(263.01);",
+                  "  pm.expect(t.utilizedBalanceAfter).to.eql(200263.01);",
+                  "});",
+                  "pm.test('Projected daily interest now on 200,263.01', () => pm.expect(s.utilization.projectedDailyInterest).to.eql(65.8399));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Utilized = 200,000.00 + 263.01 = 200,263.01 (interest capitalized); available = 1,299,736.99; unbilled reset to 0; all ledger rows billed; one INTEREST_CHARGED transaction."
+          }
+        },
+        {
+          "name": "Re-run monthly billing (must be a no-op)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Nothing billed twice for this account', () => pm.expect(pm.response.json().accountsFailed).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-monthly-billing?businessDate={{billingDate}}&forceAllCycles=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-monthly-billing"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{billingDate}}"
+                },
+                {
+                  "key": "forceAllCycles",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Billed ledger rows are excluded, so the account is not charged again."
+          }
+        },
+        {
+          "name": "Statement unchanged after billing re-run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('No double billing', () => {",
+                  "  pm.expect(s.account.utilizedAmount).to.eql(200263.01);",
+                  "  pm.expect(s.transactions.filter(t => t.transactionType === 'INTEREST_CHARGED')).to.have.length(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Utilized remains 200,263.01 and exactly one INTEREST_CHARGED transaction exists."
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Full repayment",
+      "description": "Clears the whole balance, including capitalized interest.",
+      "item": [
+        {
+          "name": "Repay full outstanding 200,263.01",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('Balance fully cleared, limit fully restored', () => {",
+                  "  pm.expect(t.utilizedBalanceAfter).to.eql(0);",
+                  "  pm.expect(t.availableLimitAfter).to.eql(1500000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/repay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "repay"
+              ],
+              "query": []
+            },
+            "description": "Zero prepayment penalty; limit is fully reusable afterwards.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 200263.01,\n  \"referenceId\": \"RP-{{runId}}-2\",\n  \"description\": \"Full settlement\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Statement after full repayment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Zero utilization', () => { pm.expect(s.account.utilizedAmount).to.eql(0); pm.expect(s.utilization.utilizationPercent).to.eql(0); });",
+                  "pm.test('4 transactions recorded', () => pm.expect(s.transactions).to.have.length(4));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Utilization back to 0%."
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Billing cycle day (forceAllCycles=false)",
+      "description": "Shows that billing honours billingCycleDay when forceAllCycles=false. Account on cycle day 15, 100,000 drawn, accrual for 10-May-2026 = 100000 x 12 / 36500 = 32.8767 -> billed 32.88.",
+      "item": [
+        {
+          "name": "Open account with billingCycleDay = 15",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Cycle day 15 and AXIS prefix', () => { pm.expect(j.billingCycleDay).to.eql(15); pm.expect(j.accountNumber).to.match(/^AXISOD\\d{10}$/); });",
+                  "pm.collectionVariables.set('cycleAccount', j.accountNumber);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts"
+              ],
+              "query": []
+            },
+            "description": "Second account used only in this folder; its number is stored in {{cycleAccount}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-CYCLE-{{runId}}\",\n  \"bankName\": \"AXIS\",\n  \"sanctionedLimit\": 500000.0,\n  \"annualInterestRate\": 12.0,\n  \"billingCycleDay\": 15\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Drawdown 100,000 on cycle account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{cycleAccount}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{cycleAccount}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Utilized = 100,000.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100000.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "EOD accrual for 2026-05-10",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual?businessDate={{cycleAccrualDate}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{cycleAccrualDate}}"
+                }
+              ]
+            },
+            "description": "Accrues 32.8767 for the cycle account."
+          }
+        },
+        {
+          "name": "Billing on 1-Jun (cycle day 1) - must NOT bill this account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-monthly-billing?businessDate={{cycleSkipDate}}&forceAllCycles=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-monthly-billing"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{cycleSkipDate}}"
+                },
+                {
+                  "key": "forceAllCycles",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "run date day-of-month = 1, account cycle day = 15 -> skipped."
+          }
+        },
+        {
+          "name": "Statement - cycle account not yet billed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Not billed on the wrong cycle day', () => {",
+                  "  pm.expect(s.account.utilizedAmount).to.eql(100000);",
+                  "  pm.expect(s.account.accumulatedUnbilledInterest).to.eql(32.8767);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{cycleAccount}}/statement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{cycleAccount}}",
+                "statement"
+              ],
+              "query": []
+            },
+            "description": "Still unbilled after the 1-Jun run."
+          }
+        },
+        {
+          "name": "Billing on 15-Jun (cycle day 15) - bills this account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('At least this account billed', () => pm.expect(pm.response.json().accountsProcessed).to.be.at.least(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-monthly-billing?businessDate={{cycleBillDate}}&forceAllCycles=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-monthly-billing"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "{{cycleBillDate}}"
+                },
+                {
+                  "key": "forceAllCycles",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "run date day-of-month = 15 matches the account's cycle day."
+          }
+        },
+        {
+          "name": "Statement - cycle account billed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('32.88 capitalized: 100,000 -> 100,032.88', () => {",
+                  "  pm.expect(s.account.utilizedAmount).to.eql(100032.88);",
+                  "  pm.expect(s.account.accumulatedUnbilledInterest).to.eql(0);",
+                  "  pm.expect(s.transactions[0].transactionType).to.eql('INTEREST_CHARGED');",
+                  "  pm.expect(s.transactions[0].amount).to.eql(32.88);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{cycleAccount}}/statement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{cycleAccount}}",
+                "statement"
+              ],
+              "query": []
+            },
+            "description": "Billed on the matching cycle day."
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Analytics: OD vs Personal Loan",
+      "description": "Loan = lump sum on the full limit, EMI over ceil(days/30) months, same rate. OD = simple daily interest on utilized amount only.",
+      "item": [
+        {
+          "name": "Compare - 3L used of 15L for 360 days",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test('Loan side', () => {",
+                  "  pm.expect(c.personalLoan.tenureMonths).to.eql(12);",
+                  "  pm.expect(c.personalLoan.principal).to.eql(1500000);",
+                  "  pm.expect(c.personalLoan.monthlyEmi).to.be.within(133270, 133280);",
+                  "});",
+                  "pm.test('OD interest = 300000 x 12% x 360 / 365 = 35,506.85', () => pm.expect(c.overdraft.totalInterest).to.eql(35506.85));",
+                  "pm.test('OD daily interest 98.6301', () => pm.expect(c.overdraft.dailyInterest).to.eql(98.6301));",
+                  "pm.test('Net savings = loan interest - OD interest, OVERDRAFT cheaper', () => {",
+                  "  pm.expect(c.netSavings).to.eql(Number((c.personalLoan.totalInterest - c.overdraft.totalInterest).toFixed(2)));",
+                  "  pm.expect(c.netSavings).to.be.above(0);",
+                  "  pm.expect(c.cheaperOption).to.eql('OVERDRAFT');",
+                  "  pm.expect(c.summary).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/analytics/compare?sanctionedLimit=1500000&utilizedAmount=300000&interestRate=12&holdingDays=360",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "analytics",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "sanctionedLimit",
+                  "value": "1500000"
+                },
+                {
+                  "key": "utilizedAmount",
+                  "value": "300000"
+                },
+                {
+                  "key": "interestRate",
+                  "value": "12"
+                },
+                {
+                  "key": "holdingDays",
+                  "value": "360"
+                }
+              ]
+            },
+            "description": "Expected: OD interest 35,506.85; personal-loan interest roughly 99k; OD cheaper by about 63k."
+          }
+        },
+        {
+          "name": "Compare - zero utilization",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test('OD costs nothing when unused', () => { pm.expect(c.overdraft.totalInterest).to.eql(0); pm.expect(c.cheaperOption).to.eql('OVERDRAFT'); });",
+                  "pm.test('Savings equal full loan interest', () => pm.expect(c.netSavings).to.eql(c.personalLoan.totalInterest));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/analytics/compare?sanctionedLimit=1500000&utilizedAmount=0&interestRate=12&holdingDays=90",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "analytics",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "sanctionedLimit",
+                  "value": "1500000"
+                },
+                {
+                  "key": "utilizedAmount",
+                  "value": "0"
+                },
+                {
+                  "key": "interestRate",
+                  "value": "12"
+                },
+                {
+                  "key": "holdingDays",
+                  "value": "90"
+                }
+              ]
+            },
+            "description": "Unused limit incurs INR 0 interest."
+          }
+        },
+        {
+          "name": "Compare - fully utilized for a year (loan can win)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test('OD interest on full 15L for 360 days = 177,534.25', () => pm.expect(c.overdraft.totalInterest).to.eql(177534.25));",
+                  "pm.test('Amortizing loan is cheaper in this case', () => { pm.expect(c.cheaperOption).to.eql('PERSONAL_LOAN'); pm.expect(c.netSavings).to.be.below(0); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/analytics/compare?sanctionedLimit=1500000&utilizedAmount=1500000&interestRate=12&holdingDays=360",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "analytics",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "sanctionedLimit",
+                  "value": "1500000"
+                },
+                {
+                  "key": "utilizedAmount",
+                  "value": "1500000"
+                },
+                {
+                  "key": "interestRate",
+                  "value": "12"
+                },
+                {
+                  "key": "holdingDays",
+                  "value": "360"
+                }
+              ]
+            },
+            "description": "Edge case: the model treats OD interest as simple interest on a constant balance, while the loan balance reduces each month. Negative savings means the loan is cheaper."
+          }
+        },
+        {
+          "name": "Compare - holdingDays = 0 (validation)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is VALIDATION_FAILED', () => pm.expect(e.code).to.eql('VALIDATION_FAILED'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });",
+                  "pm.test('Violation names holdingDays', () => pm.expect(pm.response.json().violations.map(v => v.field)).to.include('holdingDays'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/analytics/compare?sanctionedLimit=1500000&utilizedAmount=300000&interestRate=12&holdingDays=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "analytics",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "sanctionedLimit",
+                  "value": "1500000"
+                },
+                {
+                  "key": "utilizedAmount",
+                  "value": "300000"
+                },
+                {
+                  "key": "interestRate",
+                  "value": "12"
+                },
+                {
+                  "key": "holdingDays",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "holdingDays must be 1..3650."
+          }
+        },
+        {
+          "name": "Compare - utilized above limit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is INVALID_REQUEST', () => pm.expect(e.code).to.eql('INVALID_REQUEST'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/analytics/compare?sanctionedLimit=100000&utilizedAmount=300000&interestRate=12&holdingDays=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "analytics",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "sanctionedLimit",
+                  "value": "100000"
+                },
+                {
+                  "key": "utilizedAmount",
+                  "value": "300000"
+                },
+                {
+                  "key": "interestRate",
+                  "value": "12"
+                },
+                {
+                  "key": "holdingDays",
+                  "value": "30"
+                }
+              ]
+            },
+            "description": "Cross-field rule: utilizedAmount <= sanctionedLimit."
+          }
+        },
+        {
+          "name": "Compare - missing parameter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/analytics/compare?sanctionedLimit=1500000&utilizedAmount=300000&interestRate=12",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "analytics",
+                "compare"
+              ],
+              "query": [
+                {
+                  "key": "sanctionedLimit",
+                  "value": "1500000"
+                },
+                {
+                  "key": "utilizedAmount",
+                  "value": "300000"
+                },
+                {
+                  "key": "interestRate",
+                  "value": "12"
+                }
+              ]
+            },
+            "description": "holdingDays omitted."
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Negative and validation cases",
+      "description": "Run after folder 07 (account is fully repaid: utilized 0, available 1,500,000).",
+      "item": [
+        {
+          "name": "Drawdown above available limit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is INSUFFICIENT_LIMIT', () => pm.expect(e.code).to.eql('INSUFFICIENT_LIMIT'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Requests 1,500,000.01 against 1,500,000.00 available.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1500000.01\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Repay more than outstanding",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is REPAYMENT_EXCEEDS_OUTSTANDING', () => pm.expect(e.code).to.eql('REPAYMENT_EXCEEDS_OUTSTANDING'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/repay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "repay"
+              ],
+              "query": []
+            },
+            "description": "Utilized is 0, so even 0.01 is rejected (no credit balances).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 0.01\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Drawdown of exactly the full limit (boundary, allowed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Available limit reaches 0', () => pm.expect(pm.response.json().availableLimitAfter).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Boundary: amount == available limit succeeds.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1500000.0,\n  \"referenceId\": \"FULL-{{runId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Any further drawdown is rejected (limit exhausted)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is INSUFFICIENT_LIMIT', () => pm.expect(e.code).to.eql('INSUFFICIENT_LIMIT'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Available limit is now 0.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 0.01\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cleanup - repay 1,500,000",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/repay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "repay"
+              ],
+              "query": []
+            },
+            "description": "Restores the limit for the next tests.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1500000.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Duplicate referenceId - first call OK",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Draws 1,000 with referenceId DUP-{{runId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000.0,\n  \"referenceId\": \"DUP-{{runId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Duplicate referenceId - second call rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is DUPLICATE_TRANSACTION', () => pm.expect(e.code).to.eql('DUPLICATE_TRANSACTION'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Same referenceId on the same account is refused, protecting against client retries.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000.0,\n  \"referenceId\": \"DUP-{{runId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cleanup - repay 1,000",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/repay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "repay"
+              ],
+              "query": []
+            },
+            "description": "Back to zero utilization.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unknown account - statement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is ACCOUNT_NOT_FOUND', () => pm.expect(e.code).to.eql('ACCOUNT_NOT_FOUND'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/NOSUCHACCOUNT/statement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "NOSUCHACCOUNT",
+                "statement"
+              ],
+              "query": []
+            },
+            "description": "Unknown account number."
+          }
+        },
+        {
+          "name": "Unknown account - drawdown",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is ACCOUNT_NOT_FOUND', () => pm.expect(e.code).to.eql('ACCOUNT_NOT_FOUND'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/NOSUCHACCOUNT/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "NOSUCHACCOUNT",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Unknown account number.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Open account - invalid payload",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is VALIDATION_FAILED', () => pm.expect(e.code).to.eql('VALIDATION_FAILED'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });",
+                  "pm.test('Violations listed per field', () => {",
+                  "  const f = pm.response.json().violations.map(v => v.field);",
+                  "  pm.expect(f).to.include.members(['customerId', 'bankName', 'sanctionedLimit', 'annualInterestRate']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts"
+              ],
+              "query": []
+            },
+            "description": "Blank customer, missing bank, negative limit, rate above 100.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"\",\n  \"sanctionedLimit\": -5,\n  \"annualInterestRate\": 150.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Open account - billingCycleDay 29",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is VALIDATION_FAILED', () => pm.expect(e.code).to.eql('VALIDATION_FAILED'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts"
+              ],
+              "query": []
+            },
+            "description": "billingCycleDay must be 1..28.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-X\",\n  \"bankName\": \"SBI\",\n  \"sanctionedLimit\": 100000,\n  \"annualInterestRate\": 10,\n  \"billingCycleDay\": 29\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Open account - unknown bank enum",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is MALFORMED_REQUEST', () => pm.expect(e.code).to.eql('MALFORMED_REQUEST'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts"
+              ],
+              "query": []
+            },
+            "description": "bankName 'XYZ' is not in the BankType enum.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-X\",\n  \"bankName\": \"XYZ\",\n  \"sanctionedLimit\": 100000,\n  \"annualInterestRate\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Drawdown - malformed JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is MALFORMED_REQUEST', () => pm.expect(e.code).to.eql('MALFORMED_REQUEST'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "Body is not valid JSON.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"amount\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Drawdown - zero amount",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is VALIDATION_FAILED', () => pm.expect(e.code).to.eql('VALIDATION_FAILED'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "amount must be >= 0.01.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Drawdown - 3 decimal places",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is VALIDATION_FAILED', () => pm.expect(e.code).to.eql('VALIDATION_FAILED'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/drawdown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "drawdown"
+              ],
+              "query": []
+            },
+            "description": "amount allows at most 2 fraction digits.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 10.123\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Statement - limit 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json();",
+                  "pm.test('error code is VALIDATION_FAILED', () => pm.expect(e.code).to.eql('VALIDATION_FAILED'));",
+                  "pm.test('error has message and path', () => { pm.expect(e.message).to.be.a('string').and.not.empty; pm.expect(e.path).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/accounts/{{accountNumber}}/statement?limit=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "accounts",
+                "{{accountNumber}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "limit must be 1..500."
+          }
+        },
+        {
+          "name": "Admin - EOD with invalid date",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual?businessDate=29-03-2026",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": [
+                {
+                  "key": "businessDate",
+                  "value": "29-03-2026"
+                }
+              ]
+            },
+            "description": "businessDate must be ISO yyyy-MM-dd."
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Admin triggers with default date",
+      "description": "Both triggers default to today's date (Asia/Kolkata) when businessDate is omitted.",
+      "item": [
+        {
+          "name": "Trigger EOD accrual - today (default)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Defaults to a valid ISO date', () => pm.expect(j.businessDate).to.match(/^\\d{4}-\\d{2}-\\d{2}$/));",
+                  "pm.test('Job name', () => pm.expect(j.jobName).to.eql('EOD_INTEREST_ACCRUAL'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-eod-accrual",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-eod-accrual"
+              ],
+              "query": []
+            },
+            "description": "No businessDate parameter."
+          }
+        },
+        {
+          "name": "Trigger monthly billing - today (default)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Job name', () => pm.expect(j.jobName).to.eql('MONTHLY_INTEREST_BILLING'));",
+                  "pm.test('No failures', () => pm.expect(j.accountsFailed).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/overdraft/admin/trigger-monthly-billing",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "overdraft",
+                "admin",
+                "trigger-monthly-billing"
+              ],
+              "query": []
+            },
+            "description": "No businessDate parameter; bills accruals up to yesterday."
+          }
+        }
+      ]
+    }
+  ]
+}

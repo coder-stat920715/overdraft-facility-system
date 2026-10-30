@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: overdraft-facility-system
+  profiles:
+    default: h2          # run `-Dspring.profiles.active=postgres` for PostgreSQL
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate # schema is owned by Flyway
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+
+overdraft:
+  timezone: Asia/Kolkata
+  scheduler:
+    enabled: true
+  interest:
+    leap-year-aware: false   # false = Actual/365 Fixed (default Indian banking convention); true = Actual/Actual
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+---
+spring:
+  config:
+    activate:
+      on-profile: h2
+  datasource:
+    url: jdbc:h2:mem:oddb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:overdraft_db}
+    username: ${DB_USER:od_user}
+    password: ${DB_PASSWORD:od_password}
+    driver-class-name: org.postgresql.Driver
